@@ -1,15 +1,3 @@
-# Project Moved
-
-**This fork is archived and no longer maintained.**
-
-Active development has moved to **[IPv4 Counter — Optimized](https://github.com/Kukushkasus/ipv4-counter-optimized)**.
-
-The new repository contains an independently maintained implementation with improved performance, an adaptive bitmap, and additional tests.
-
-**Original project:** [alexproskurov/ip-addr-counter](https://github.com/alexproskurov/ip-addr-counter)
-
----
-
 # IPv4 Counter — Optimized
 
 A performance-focused IPv4 uniqueness counter written in Go. It processes large, newline-delimited text files using two self-contained counting strategies: a concurrent atomic bitmap and a memory-efficient adaptive bitmap.

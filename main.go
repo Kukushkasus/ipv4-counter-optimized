@@ -6,7 +6,7 @@ import (
 	"os"
 	"runtime/pprof"
 
-	"github.com/alexproskurov/ip-addr-counter/counter"
+	"github.com/Kukushkasus/ipv4-counter-optimized/counter"
 )
 
 func run() (err error) {

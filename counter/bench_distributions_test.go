@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/alexproskurov/ip-addr-counter/counter"
+	"github.com/Kukushkasus/ipv4-counter-optimized/counter"
 )
 
 const distributionBenchLines = 3_000_000

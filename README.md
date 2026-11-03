@@ -1,46 +1,91 @@
-# IP Address Counter
+# IPv4 Counter — Optimized
 
-A Go project for counting **unique, valid IPv4 addresses** in large, newline-delimited text files. It compares a concurrent atomic bitmap with a single-threaded adaptive bitmap, without third-party IP parsing or bitset libraries.
+A performance-focused IPv4 uniqueness counter written in Go. It processes large, newline-delimited text files using two self-contained counting strategies: a concurrent atomic bitmap and a memory-efficient adaptive bitmap.
+
+This is an **independently maintained variant** of [alexproskurov/ip-addr-counter](https://github.com/alexproskurov/ip-addr-counter), developed to explore different parsing, concurrency, and memory tradeoffs.
+
+## Features
+
+- **Custom IPv4 parser:** strict dotted-decimal validation without `net.ParseIP` or third-party parsing libraries.
+- **Concurrent `atomic` mode:** bounded workers, reusable read buffers, a shared bitmap with atomic updates, and counting on first insertion.
+- **Adaptive `bitset` mode:** allocates 8 KiB pages on demand and switches to a dense bitmap for widely distributed addresses.
+- **No third-party counting or bitmap dependencies.**
+- Regression tests, race-detector coverage, distribution-based benchmarks, and optional CPU profiling.
+
+Both modes count **unique valid IPv4 addresses**. Invalid and empty lines are skipped, including addresses with out-of-range octets or leading zeros in multi-digit octets. CRLF input and files without a trailing newline are supported.
+
+## Requirements
+
+- Go 1.25.1 or newer, as specified by `go.mod`.
 
 ## Usage
 
-```bash
-go run . atomic path/to/ips.txt
-go run . bitset path/to/ips.txt
-```
-
-Both commands print `Unique IPs: N`.
-
-Optional CPU profiling (disabled by default):
+From the project directory:
 
 ```bash
-go run . -cpuprofile cpu.prof atomic path/to/ips.txt
+go run . atomic ips.txt
+go run . bitset ips.txt
 ```
 
-Each line must contain one dotted-decimal IPv4 address. CRLF and an unterminated final line are supported. Invalid, empty, or overlong lines are ignored. The parser rejects out-of-range octets, extra components, non-digits, whitespace, and leading zeros in multi-digit octets.
+Input: one IPv4 address per line, for example:
 
-## Implementations
+```text
+192.168.1.1
+8.8.8.8
+192.168.1.1
+```
 
-### Concurrent atomic bitmap (`atomic`)
+Output:
 
-- Reads the file in 4 MiB blocks, preserving addresses split across block boundaries.
-- Reuses owned buffers through a bounded worker pool and `sync.Pool`.
-- Parses IPv4 with a custom, nonallocating parser.
-- Sets bits in a shared 512 MiB bitmap using compare-and-swap (CAS).
-- Counts successful first-time bit transitions per worker, then sums worker-local counts. No final full-bitmap scan is needed.
+```text
+Unique IPs: 2
+```
 
-The main tradeoff is the fixed bitmap allocation (512 MiB), even for a small number of distinct addresses.
+Optional CPU profiling:
 
-### Single-threaded adaptive bitmap (`bitset`)
+```bash
+go run . -cpuprofile cpu.prof atomic ips.txt
+```
 
-- Starts with a sparse collection of 8 KiB pages, each covering one IPv4 `/16` range.
-- Allocates pages on demand and counts a new address as soon as its bit is set.
-- After more than 64 distinct pages are needed, switches to a dense 512 MiB bitmap, preserving all previously recorded bits.
-- Uses a custom bitmap rather than `github.com/bits-and-blooms/bitset`.
+## How it works
 
-This saves substantial memory for clustered addresses. Highly scattered addresses may trigger the dense representation.
+### Atomic counter
 
-## Correctness and tests
+The concurrent implementation reads the file in **4 MiB chunks** and sends buffers to workers, handling lines that cross chunk boundaries. Workers parse each address and set its bit in a shared **512 MiB IPv4 bitmap** using atomic compare-and-swap. A successful first insertion increments a worker-local counter; the final answer is the sum of those counters, without a full bitmap scan.
+
+**Tradeoff:** higher throughput on tested workloads, but the dense bitmap requires substantial memory even when few unique addresses are present.
+
+### Adaptive bitset counter
+
+The single-threaded implementation initially stores bits in **8 KiB pages**, each covering one IPv4 `/16` range. Pages are allocated only for ranges that appear in the input. When addresses span more than **64 pages**, it converts to a dense bitmap while preserving the already-seen addresses.
+
+**Tradeoff:** very low allocations for clustered addresses; widely scattered addresses can trigger a full 512 MiB allocation.
+
+## Performance
+
+Benchmarked on **AMD Ryzen 5 2600, Linux**, using **3 million input addresses per scenario**. Numbers are medians of five runs of the same distribution benchmark against the [original repository](https://github.com/alexproskurov/ip-addr-counter) at commit `be2802d`.
+
+**Atomic mode (original → optimized):**
+
+- 16 repeated addresses: **227.5 ms → 109.6 ms** (2.08× faster)
+- Sequential unique addresses: **246.3 ms → 106.3 ms** (2.32× faster)
+- Scattered unique addresses: **550.5 ms → 131.8 ms** (4.18× faster)
+
+**Bitset mode (original → optimized):**
+
+- 16 repeated addresses: **184.1 ms → 126.0 ms** (1.46× faster)
+- Sequential unique addresses: **218.8 ms → 140.7 ms** (1.56× faster)
+- Scattered unique addresses: **504.2 ms → 465.1 ms** (1.08× faster)
+
+For the repeated and sequential inputs, adaptive-bitset allocations dropped from approximately **537 MB/op** to **598 KB/op** and **967 KB/op**, respectively. These are **total bytes allocated per operation (`B/op`)**, not peak RAM usage. Performance depends on hardware, input distribution, and system load.
+
+Reproduce the distribution benchmarks:
+
+```bash
+go test -run '^$' -bench '^BenchmarkIPDistributions' -benchtime=10x -count=5 -benchmem ./counter
+```
+
+## Tests
 
 ```bash
 go test -count=1 ./...
@@ -48,27 +93,14 @@ go test -race -count=1 ./...
 go vet ./...
 ```
 
-Regression tests cover IPv4 parsing and malformed input, Windows CRLF, missing terminal newline, long lines, chunk boundaries, duplicate counting under contention, and adaptive-bitmap switching. A parser fuzz target is also included.
+Tests exercise parsing, malformed input, duplicates, buffer boundaries, line endings, concurrent insertions, and adaptive-bitmap transitions.
 
-## Benchmarks
+## Origin and attribution
 
-```bash
-go test -run '^$' -bench '^BenchmarkIPDistributions' -benchtime=10x -count=5 -benchmem ./counter
-```
+This project is an independent continuation of ideas and code from **[IP Address Counter by Oleksii Proskurov](https://github.com/alexproskurov/ip-addr-counter)**. The original repository and this optimized variant are maintained separately; neither replaces the other.
 
-The following measurements are **medians of five runs on Linux, AMD Ryzen 5 2600**, using the same `BenchmarkIPDistributions` cases for upstream `main` (`be2802d`) and the optimized version. They are illustrative, not guaranteed on other hardware.
+The original project is distributed under the **MIT License**. Its original copyright and license notice are retained in [`LICENSE`](LICENSE). See the Git history for the original and subsequent contributions.
 
-| Data distribution | Implementation | Upstream | Optimized | Speedup |
-| --- | --- | ---: | ---: | ---: |
-| 16 repeated addresses | atomic | 227.5 ms | 109.6 ms | 2.08× |
-| Sequential unique addresses | atomic | 246.3 ms | 106.3 ms | 2.32× |
-| Scattered unique addresses | atomic | 550.5 ms | 131.8 ms | 4.18× |
-| 16 repeated addresses | bitset | 184.1 ms | 126.0 ms | 1.46× |
-| Sequential unique addresses | bitset | 218.8 ms | 140.7 ms | 1.56× |
-| Scattered unique addresses | bitset | 504.2 ms | 465.1 ms | 1.08× |
+## License
 
-The Go benchmark `B/op` figure reports **total bytes allocated per operation**, not peak resident memory. For the repeated and sequential cases, adaptive-bitset allocations were approximately 598 KiB and 967 KiB, respectively, versus about 537 MB for the original dense bitset.
-
-## Why this project?
-
-To explore efficient IPv4 parsing, memory representation, concurrent file processing, atomic operations, and reproducible performance testing in Go.
+MIT — see [LICENSE](LICENSE).

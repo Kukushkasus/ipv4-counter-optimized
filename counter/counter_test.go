@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/alexproskurov/ip-addr-counter/counter"
+	"github.com/Kukushkasus/ipv4-counter-optimized/counter"
 )
 
 func writeTempFile(t testing.TB, addresses []string, repeatTimes int) string {
